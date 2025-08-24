@@ -1,31 +1,35 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"runtime"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
-func worker(ctx context.Context, wg *sync.WaitGroup, senhaReal string, jobs <-chan int, resultCh chan<- string) {
+func itoa8(n int) string {
+	var b [8]byte
+	for i := 7; i >= 0; i-- {
+		b[i] = byte('0' + n%10)
+		n /= 10
+	}
+	return string(b[:])
+}
+
+func workerRange(start, end int, senhaReal string, found *atomic.Bool, result *atomic.Value, wg *sync.WaitGroup) {
 	defer wg.Done()
-	for {
-		select {
-		case <-ctx.Done():
+
+	for i := start; i < end; i++ {
+		if found.Load() {
 			return
-		case i, ok := <-jobs:
-			if !ok {
-				return
-			}
-			tentativa := fmt.Sprintf("%08d", i)
-			if verificaSenha(tentativa, senhaReal) {
-				select {
-				case resultCh <- tentativa:
-				case <-ctx.Done():
-				}
-				return
-			}
+		}
+
+		tentativa := itoa8(i)
+		if verificaSenha(tentativa, senhaReal) {
+			result.Store(tentativa)
+			found.Store(true)
+			return
 		}
 	}
 }
@@ -35,46 +39,32 @@ func RunConcorrente(senhaReal string, workers int) {
 		workers = runtime.NumCPU()
 	}
 
+	const max = 100_000_000 // 00000000..99999999
+
 	inicio := time.Now()
-	const max = 100_000_000
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	jobs := make(chan int, 4096)
-	resultCh := make(chan string, 1)
+	// Divide o espaço de busca em fatias aproximadamente iguais
+	chunk := (max + workers - 1) / workers
 
 	var wg sync.WaitGroup
+	var found atomic.Bool
+	var result atomic.Value
+
 	wg.Add(workers)
 	for w := 0; w < workers; w++ {
-		go worker(ctx, &wg, senhaReal, jobs, resultCh)
-	}
-
-	go func() {
-		for i := 0; i < max; i++ {
-			select {
-			case <-ctx.Done():
-				close(jobs)
-				return
-			default:
-			}
-			jobs <- i
+		start := w * chunk
+		end := start + chunk
+		if end > max {
+			end = max
 		}
-		close(jobs)
-	}()
-
-	var encontrada string
-	select {
-	case encontrada = <-resultCh:
-		cancel()
-	case <-ctx.Done():
+		go workerRange(start, end, senhaReal, &found, &result, &wg)
 	}
 
 	wg.Wait()
 
 	duracao := time.Since(inicio)
-	if encontrada != "" {
-		fmt.Printf("Senha encontrada: %s (workers: %d)\n", encontrada, workers)
+	if found.Load() {
+		fmt.Printf("Senha encontrada: %s (workers: %d)\n", result.Load().(string), workers)
 	} else {
 		fmt.Println("Senha não encontrada (isso não deveria acontecer).")
 	}

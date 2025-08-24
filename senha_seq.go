@@ -11,10 +11,8 @@ func verificaSenha(tentativa, senhaReal string) bool {
 
 func RunSequencial(senhaReal string) {
 	inicio := time.Now()
-
-	for i := 0; i < 100000000; i++ {
-		tentativa := fmt.Sprintf("%08d", i)
-
+	for i := 0; i < 100_000_000; i++ {
+		tentativa := itoa8(i)
 		if verificaSenha(tentativa, senhaReal) {
 			fmt.Println("Senha encontrada:", tentativa)
 			break
